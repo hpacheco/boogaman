@@ -26,6 +26,7 @@ data GenType fv =
   BoolType |                                -- ^ bool 
   RealType |                                -- ^ real
   IntType |                                 -- ^ int
+  BitvectorType Int |                       -- ^ bitvector of a given word size
   MapType [fv] [GenType fv] (GenType fv) |  -- 'MapType' @type_vars domains range@ : arrow type (used for maps, function and procedure signatures)
   IdType Id [GenType fv]                    -- 'IdType' @name args@: type denoted by an identifier (either type constructor, possibly with arguments, or a type variable)
   deriving (Data, Typeable,Show)
@@ -100,6 +101,8 @@ mapSelectExpr m args = attachPos (position m) (MapSelection m args)
 ff = Literal (BoolValue False)
 tt = Literal (BoolValue True)
 numeral n = Literal (IntValue n)
+bvvalue :: Integer -> GenType fv -> BareExpression
+bvvalue n (BitvectorType ws) = Literal $ BitvectorValue n ws
 
 isLiteral (Pos _ (Literal _)) = True
 isLiteral _ = False
@@ -207,11 +210,13 @@ emptyMap = M.empty
 data Value = IntValue Integer |  -- ^ Integer value
   BoolValue Bool |               -- ^ Boolean value
   CustomValue Type Ref |         -- ^ Value of a user-defined type
-  Reference Type Ref             -- ^ Map reference
+  Reference Type Ref |           -- ^ Map reference
+  BitvectorValue Integer Int     -- ^ Bitvector value
   deriving (Eq, Ord, Data,Show,Typeable)
   
 -- | Type of a value
 valueType :: Value -> Type
+valueType (BitvectorValue i ws) = BitvectorType ws
 valueType (IntValue _) = IntType
 valueType (BoolValue _) = BoolType
 valueType (CustomValue t _) = t

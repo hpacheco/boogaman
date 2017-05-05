@@ -26,6 +26,7 @@ instance Pretty Program where
 instance Pretty Type where 
   pretty BoolType = text "bool"
   pretty IntType = text "int"
+  pretty (BitvectorType ws) = text "bv" <> int ws
   pretty RealType = text "real"
   pretty (MapType fv domains range) = parens (typeArgsDoc fv <> 
     brackets (commaSep (map pretty domains)) <+>
@@ -259,6 +260,7 @@ logDoc r = text "l'" <> int r
 -- | Pretty-printed value
 instance Pretty Value where
   pretty (IntValue n) = integer n
+  pretty (BitvectorValue n ws) = integer n <> text "bv" <> int ws
   pretty (BoolValue False) = text "false"
   pretty (BoolValue True) = text "true"
   pretty (CustomValue t n) = pretty t <+> int n

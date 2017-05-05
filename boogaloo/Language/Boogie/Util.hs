@@ -99,13 +99,16 @@ type TypeBinding = Map Id Type
 -- all variables in the domain of @bindings@ are considered free if not explicitly bound
 typeSubst :: TypeBinding -> Type -> Type
 typeSubst _ BoolType = BoolType
+typeSubst _ (BitvectorType w) = BitvectorType w
 typeSubst _ IntType = IntType
+typeSubst _ RealType = RealType
 typeSubst binding (IdType id []) = case M.lookup id binding of
   Just t -> t
   Nothing -> IdType id []
 typeSubst binding (IdType id args) = IdType id (map (typeSubst binding) args)
 typeSubst binding (MapType bv domains range) = MapType bv (map (typeSubst removeBound) domains) (typeSubst removeBound range)
   where removeBound = deleteAll bv binding
+typeSubst binding t = error $ "typeSubst: " ++ show binding ++ " " ++ show t
   
 -- | 'renameTypeVars' @tv newTV binding@ : @binding@ with each occurrence of one of @tv@ replaced with corresponding @newTV@ 
 -- (in both domain and range)
@@ -138,6 +141,7 @@ isTypeVar contextTypeVars v = head v == nonIdChar || v `elem` contextTypeVars
 unifier :: [Id] -> [Type] -> [Type] -> Maybe TypeBinding
 unifier _ [] [] = Just M.empty
 unifier fv (IntType:xs) (IntType:ys) = unifier fv xs ys
+unifier fv (BitvectorType w1:xs) (BitvectorType w2:ys) | w1 == w2 = unifier fv xs ys
 unifier fv (BoolType:xs) (BoolType:ys) = unifier fv xs ys
 unifier fv ((IdType id1 args1):xs) ((IdType id2 args2):ys) | id1 == id2 = unifier fv (args1 ++ xs) (args2 ++ ys)
 unifier fv ((IdType id []):xs) (y:ys) | isTypeVar fv id = 

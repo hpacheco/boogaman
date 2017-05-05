@@ -23,6 +23,7 @@ import Text.Parsec (ParsecT(..))
 import qualified Text.Parsec as P
 import qualified Text.ParserCombinators.Parsec.Expr as P
 import qualified Text.ParserCombinators.Parsec.Char as P
+import qualified Text.ParserCombinators.Parsec.Number as PN
 import Control.Monad
 import Control.Applicative ((<$>), (<*>), (<*), (*>))
 
@@ -94,13 +95,21 @@ commaSep1 = P.commaSep1 lexer
 
 {- Types -}
 
+bvType :: Parser Type
+bvType = (P.lexeme lexer) $ string "bv" >> PN.int >>= \ws -> return $ BitvectorType ws
+
+bvValue :: Parser Value
+bvValue = (P.lexeme lexer) $ PN.decimal >>= \i -> string "bv" >> PN.int >>= \ws -> return $ BitvectorValue i ws
+
 typeAtom :: Parser Type
-typeAtom = choice [
-  reserved "int" >> return IntType,
-  reserved "bool" >> return BoolType,
-  reserved "real" >> return RealType,
-  -- bit vector
-  parens type_
+typeAtom = bvType
+  <||>
+  choice [
+    reserved "int" >> return IntType,
+    reserved "bool" >> return BoolType,
+    reserved "real" >> return RealType,
+    -- bit vector
+    parens type_
   ]
        
 typeArgs :: Parser [Id]
@@ -149,15 +158,17 @@ infixr 1 <||>
 p1 <||> p2 = P.try p1 P.<|> p2
   
 atom :: Parser BareExpression
-atom = node <$> (parens expression)
-  <||> choice [
-  reserved "false" >> return ff,
-  reserved "true" >> return tt,
-  numeral <$> natural,
-  varOrCall,
-  old,
-  ifThenElse,
-  parens quantified
+atom = (node <$> (parens expression))
+  <||> Literal <$> bvValue
+  <||>
+  choice [
+    reserved "false" >> return ff,
+    reserved "true" >> return tt,
+    numeral <$> natural,
+    varOrCall,
+    old,
+    ifThenElse,
+    parens quantified
   ]
   where
     varOrCall = (functionIdentifier >>= \id -> parens (commaSep expression) >>= return . Application id)
