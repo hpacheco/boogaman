@@ -264,6 +264,7 @@ logDoc r = text "l'" <> int r
 -- | Pretty-printed value
 instance Pretty Value where
   pretty (IntValue n) = integer n
+  pretty (PowerValue n ws) = integer n <> text "e" <> int ws
   pretty (BitvectorValue n ws) = integer n <> text "bv" <> int ws
   pretty (BoolValue False) = text "false"
   pretty (BoolValue True) = text "true"

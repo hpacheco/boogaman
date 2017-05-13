@@ -218,7 +218,7 @@ data Value = IntValue Integer  -- ^ Integer value
   | CustomValue Type Ref         -- ^ Value of a user-defined type
   | Reference Type Ref           -- ^ Map reference
   | BitvectorValue Integer Int     -- ^ Bitvector value
-  | PowerValue Integer Integer
+  | PowerValue Integer Int
   deriving (Eq, Ord, Data,Show,Typeable)
   
 -- | Type of a value
