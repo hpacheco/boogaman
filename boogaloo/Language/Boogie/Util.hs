@@ -190,9 +190,9 @@ freeVarsTwoState e = case node e of
   Literal _ -> ([], [])
   Logical _ _ -> ([], [])
   Var x -> ([x], [])
-  Application name args -> freeVarsTwoState $ attachPos (position e) $ MapSelection (functionExpr name (position e)) args
-  MapSelection m args ->  over both (nub . concat) (unzip (map freeVarsTwoState (m : args)))
-  MapUpdate m args val ->  over both (nub . concat) (unzip (map freeVarsTwoState (val : m : args)))
+  Application name args -> freeVarsTwoState $ attachPos (position e) $ MapSelection (functionExpr name (position e)) (map IndexPoint args)
+  MapSelection m args ->  over both (nub . concat) (unzip (map freeVarsTwoState (m : concatMap indexSelectionExprs args)))
+  MapUpdate m args val ->  over both (nub . concat) (unzip (map freeVarsTwoState (val : m : concatMap indexSelectionExprs args)))
   Old e -> let (state, old) = freeVarsTwoState e in ([], state ++ old)
   IfExpr cond e1 e2 -> over both (nub . concat) (unzip [freeVarsTwoState cond, freeVarsTwoState e1, freeVarsTwoState e2])
   Coercion e _ -> freeVarsTwoState e
@@ -217,8 +217,8 @@ exprSubst' binding (Var id) = case M.lookup id binding of
   Nothing -> Var id
   Just e -> (node e)
 exprSubst' binding (Application id args) = Application id (map (exprSubst binding) args)
-exprSubst' binding (MapSelection m args) = MapSelection (exprSubst binding m) (map (exprSubst binding) args)
-exprSubst' binding (MapUpdate m args val) = MapUpdate (exprSubst binding m) (map (exprSubst binding) args) (exprSubst binding val)
+exprSubst' binding (MapSelection m args) = MapSelection (exprSubst binding m) (map (indexSelectionSubst binding) args)
+exprSubst' binding (MapUpdate m args val) = MapUpdate (exprSubst binding m) (map (indexSelectionSubst binding) args) (exprSubst binding val)
 exprSubst' binding (Old e) = Old (exprSubst binding e)
 exprSubst' binding (IfExpr cond e1 e2) = IfExpr (exprSubst binding cond) (exprSubst binding e1) (exprSubst binding e2)
 exprSubst' binding (Coercion e t) = Coercion (exprSubst binding e) t
@@ -229,6 +229,11 @@ exprSubst' binding (Quantified qop tv boundVars trggs e) = Quantified qop tv bou
       binding' = deleteAll (map fst boundVars) binding
       trggs' = applyToQTrigAtts (exprSubst binding') trggs
 exprSubst' _ e = e
+
+indexSelectionSubst :: VarBinding -> IndexSelection -> IndexSelection
+indexSelectionSubst binding (IndexRange x y) = IndexRange (exprSubst binding x) (exprSubst binding y)
+indexSelectionSubst binding (IndexPoint x) = IndexPoint (exprSubst binding x) 
+
 
 applyToQTrigAtts f xs = map (applyToQTrigAtt f) xs
 
@@ -264,8 +269,8 @@ mapRefs expr = case node expr of
   Logical _ _ -> []
   Var x -> []
   Application name args -> nub . concat $ map mapRefs args
-  MapSelection m args -> nub . concat $ map mapRefs (m : args)
-  MapUpdate m args val ->  nub . concat $ map mapRefs (val : m : args)
+  MapSelection m args -> nub . concat $ map mapRefs (m : concatMap indexSelectionExprs args)
+  MapUpdate m args val ->  nub . concat $ map mapRefs (val : m : concatMap indexSelectionExprs args)
   Old e -> internalError $ text "mapRefs should only be applied in single-state context"
   IfExpr cond e1 e2 -> nub . concat $ [mapRefs cond, mapRefs e1, mapRefs e2]
   Coercion e _ -> mapRefs e
@@ -281,9 +286,9 @@ refSelections expr = case node expr of
   Var x -> []
   Application name args -> nub . concat $ map refSelections args
   MapSelection m args -> case node m of 
-   Literal (Reference _ r) -> (r, args) : (nub . concat $ map refSelections args)
-   _ -> nub . concat $ map refSelections (m : args)
-  MapUpdate m args val ->  nub . concat $ map refSelections (val : m : args)  
+   Literal (Reference _ r) -> (r, concatMap indexSelectionExprs args) : (nub . concat $ map refSelections $ concatMap indexSelectionExprs args)
+   _ -> nub . concat $ map refSelections (m : concatMap indexSelectionExprs args)
+  MapUpdate m args val ->  nub . concat $ map refSelections (val : m : concatMap indexSelectionExprs args)  
   Old e -> internalError $ text "refSelections should only be applied in single-state context"
   IfExpr cond e1 e2 -> nub . concat $ [refSelections cond, refSelections e1, refSelections e2]
   Coercion e _ -> refSelections e
@@ -297,8 +302,8 @@ applications expr = case node expr of
   Literal _-> []
   Var x-> []
   Application name args-> (name, args) : (nub . concat $ map applications args)
-  MapSelection m args-> nub . concat $ map applications (m : args)
-  MapUpdate m args val->  nub . concat $ map applications (val : m : args)
+  MapSelection m args-> nub $ concatMap applications (m:concatMap indexSelectionExprs args)
+  MapUpdate m args val->  nub . concat $ map applications (val : m : concatMap indexSelectionExprs args)
   Old e-> internalError $ text "applications should only be applied in single-state context"
   IfExpr cond e1 e2-> nub . concat $ [applications cond, applications e1, applications e2]
   Coercion e _-> applications e
@@ -318,8 +323,8 @@ removeBoundClashes names (Pos p expr) = attachPos p $ case expr of
   Literal _ -> expr
   Var x -> expr
   Application name args -> Application name (map go args)
-  MapSelection m args -> MapSelection (go m) (map go args)
-  MapUpdate m args val ->  MapUpdate (go m) (map go args) (go val)
+  MapSelection m args -> MapSelection (go m) (map goindex args)
+  MapUpdate m args val ->  MapUpdate (go m) (map goindex args) (go val)
   Old e -> Old (go e)
   IfExpr cond e1 e2 -> IfExpr (go cond) (go e1) (go e2)
   Coercion e t -> Coercion (go e) t
@@ -335,6 +340,8 @@ removeBoundClashes names (Pos p expr) = attachPos p $ case expr of
     in Quantified op tv (zip vars' types) trggs' e'
   where
     go = removeBoundClashes names
+    goindex (IndexRange x y) = IndexRange (go x) (go y)
+    goindex (IndexPoint x) = IndexPoint $ go x
   
 {- Specs -}
 

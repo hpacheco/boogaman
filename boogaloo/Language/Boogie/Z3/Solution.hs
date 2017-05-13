@@ -52,8 +52,8 @@ updateRefMap = mapM_ addRefs
                   Var _ -> Set.empty
                   Logical t ref -> Set.singleton (LogicRef t ref)
                   Application _ es -> Set.unions (map refE es)
-                  MapSelection e es -> Set.unions (map refE (e:es))
-                  MapUpdate e es e' -> Set.unions (map refE (e:e':es))
+                  MapSelection e es -> Set.unions (map refE (e:concatMap indexSelectionExprs es))
+                  MapUpdate e es e' -> Set.unions (map refE (e:e':concatMap indexSelectionExprs es))
                   Old e -> refE e
                   IfExpr e1 e2 e3 -> Set.unions (map refE [e1, e2, e3])
                   Coercion e _ -> refE e

@@ -101,6 +101,9 @@ bvType = (P.lexeme lexer) $ string "bv" >> PN.int >>= \ws -> return $ BitvectorT
 bvValue :: Parser Value
 bvValue = (P.lexeme lexer) $ PN.decimal >>= \i -> string "bv" >> PN.int >>= \ws -> return $ BitvectorValue i ws
 
+powerValue :: Parser Value
+powerValue = (P.lexeme lexer) $ PN.decimal >>= \i -> string "e" >> PN.int >>= \ws -> return $ PowerValue i ws
+
 typeAtom :: Parser Type
 typeAtom = bvType
   <||>
@@ -160,6 +163,7 @@ p1 <||> p2 = P.try p1 P.<|> p2
 atom :: Parser BareExpression
 atom = (node <$> (parens expression))
   <||> Literal <$> bvValue
+  <||> Literal <$> powerValue
   <||>
   choice [
     reserved "false" >> return ff,
@@ -205,16 +209,24 @@ arrayExpression = do
   return $ foldr (.) id (reverse mapOps) e
   where
     mapOp = do
-      args <- commaSep1 expression
+      args <- commaSep1 indexSelection
       option (inheritPos ((flip MapSelection) args)) (do 
         reservedOp ":="
         e <- expression
         return $ inheritPos (flip ((flip MapUpdate) args) e))
         
+indexSelection :: Parser IndexSelection
+indexSelection = do
+    e1 <- expression
+    mb2 <- optionMaybe (reservedOp ":" *> expression)
+    case mb2 of
+        Nothing -> return $ IndexPoint e1
+        Just e2 -> return $ IndexRange e1 e2
+        
 coercionExpression :: Parser Expression
 coercionExpression = do
   e <- arrayExpression
-  coercedTos <- many coercedTo
+  coercedTos <- many' coercedTo
   return $ foldr (.) id (reverse coercedTos) e
   where
     coercedTo = do
@@ -227,9 +239,8 @@ expression :: Parser Expression
 expression = P.buildExpressionParser table coercionExpression <?> "expression"
 
 table = [[unOp Neg, unOp Not],
-     [binOp Times P.AssocLeft, binOp Div P.AssocLeft, binOp Mod P.AssocLeft],
+     [binOp Concat P.AssocLeft,binOp Times P.AssocLeft, binOp Div P.AssocLeft, binOp Mod P.AssocLeft],
      [binOp Plus P.AssocLeft, binOp Minus P.AssocLeft],
-     --[binOp Concat AssocLeft],
      [binOp Eq P.AssocNone, binOp Neq P.AssocNone, binOp Ls P.AssocNone, binOp Leq P.AssocNone, binOp Gt P.AssocNone, binOp Geq P.AssocNone, binOp Lc P.AssocNone],
      [binOp And P.AssocLeft], -- ToDo: && and || on the same level but do not interassociate
      [binOp Or P.AssocLeft],
@@ -566,8 +577,15 @@ oneLineComment = do
     simpleSpace
     return (c++cs)
 
+maybeCont :: P.ParsecT tok st m a -> (Maybe a -> P.ParsecT tok st m b) -> P.ParsecT tok st m b
+maybeCont p cont = (p >>= cont . Just) <||> cont Nothing
 
-
+many' :: P.ParsecT tok st m a -> P.ParsecT tok st m [a]
+many' p = maybeCont p $ \mb -> case mb of
+    Nothing -> return []
+    Just x -> do
+        xs <- many' p
+        return (x:xs)
    
       
       

@@ -90,6 +90,15 @@ instance Simplify Program where
             xs' <- simplifyDecls xs vc
             return $ map Right (maybeToList d') ++ xs'
 
+instance Simplify IndexSelection where
+    simplify (IndexRange x y) = do
+        x' <- simplifyId x
+        y' <- simplifyId y
+        return $ Just $ IndexRange x' y'
+    simplify (IndexPoint x) = do
+        x' <- simplifyId x
+        return $ Just $ IndexPoint x'
+
 instance Simplify BareExpression where
     simplify e = liftM Just $ simplifyBareExpr e
 
@@ -182,6 +191,9 @@ instance Simplify [Decl] where
     simplify = simplifyList
     
 instance Simplify [Expression] where
+    simplify = simplifyList
+
+instance Simplify [IndexSelection] where
     simplify = simplifyList
 
 instance Simplify [Body] where

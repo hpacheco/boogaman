@@ -26,6 +26,7 @@ instance Pretty UnOp where
 -- | Names of binary operators             
 binOpTokens :: Map BinOp String
 binOpTokens = fromList [(Plus,    "+")
+                       ,(Concat,  "++")
                        ,(Minus,   "-")
                        ,(Times,   "*")
                        ,(Div,     "div")

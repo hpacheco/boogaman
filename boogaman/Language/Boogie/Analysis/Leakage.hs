@@ -320,14 +320,18 @@ instance FVS BareExpression where
     fvs (Var i) = Set.singleton i
     fvs (Logical {}) = Set.empty
     fvs (Application f es) = mconcat $ map fvs es
-    fvs (MapSelection e es) = mconcat $ map fvs (e:es)
-    fvs (MapUpdate e es e1) = mconcat $ map fvs (e:e1:es)
+    fvs (MapSelection e es) = mconcat [fvs e,mconcat $ map fvs es]
+    fvs (MapUpdate e es e1) = mconcat [fvs e,fvs e1, mconcat $ map fvs es]
     fvs (Old e) = fvs e
     fvs (IfExpr e1 e2 e3) = mconcat $ map fvs [e1,e2,e2]
     fvs (Coercion e t) = fvs e
     fvs (UnaryExpression _ e) = fvs e
     fvs (BinaryExpression _ e1 e2) = mconcat $ map fvs [e1,e2]
     fvs (Quantified _ _ ids trggs e) = (fvs trggs `Set.union` fvs e) `Set.difference` (fvs $ map fst ids)
+  
+instance FVS IndexSelection where
+    fvs (IndexRange x y) = fvs x `Set.union` fvs y
+    fvs (IndexPoint x) = fvs x
     
 instance FVS [QTriggerAttribute] where
     fvs = mconcat . map fvs

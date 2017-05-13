@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, Rank2Types #-}
+{-# LANGUAGE ViewPatterns, FlexibleContexts, Rank2Types #-}
 
 -- | Interpreter for Boogie 2
 module Language.Boogie.Interpreter (
@@ -483,7 +483,7 @@ setMapValue r index val = do
     pointConstraint = let
         mapType = MapType [] (map thunkType index) (thunkType val)
         mapExpr = gen $ Literal $ Reference mapType r
-      in gen (MapSelection mapExpr index) |=| val
+      in gen (MapSelection mapExpr $ map IndexPoint index) |=| val
     isNewLiteralArg new olds = all isLiteral (new : olds) && not (new `elem` olds)          
     pointKind inst = if M.null inst || (or $ zipWith isNewLiteralArg index (transpose $ M.keys inst))
       then UniquePoint  -- No choice if the map is empty or at least in one dimension the new point is provable different
@@ -520,7 +520,7 @@ eval expr@(Pos pos e) = case e of
   Logical t r -> evalLogical t r pos
   Application name args -> evalApplication name args pos
   MapSelection m args -> evalMapSelection m args pos
-  MapUpdate m args new -> evalMapUpdate m args new pos
+--  MapUpdate m args new -> evalMapUpdate m args new pos
   Old e -> old $ eval e
   IfExpr cond e1 e2 -> evalIf cond e1 e2
   Coercion e t -> eval e
@@ -566,13 +566,14 @@ evalVar name pos = do
 evalApplication name args pos = do
   fs <- use envFunctions
   case M.lookup name fs of
-    Nothing -> evalMapSelection (functionExpr name pos) args pos
+    Nothing -> evalMapSelection (functionExpr name pos) (map IndexPoint args) pos
     Just expr -> do -- non-recursive function with a body: eval the body
       args' <- mapM eval args
       let Quantified Lambda _ _ _ body = node expr
       lambdaLocally expr args' . eval $ body
 
-evalMapSelection m args pos = do  
+evalMapSelection :: (Monad m, Functor m) => Expression -> [IndexSelection] -> SourcePos -> Execution m Thunk
+evalMapSelection m (concatMap indexSelectionExprs -> args) pos = do  
   m' <- eval m
   case fromLiteral m' of
     Reference _ r -> do
@@ -581,7 +582,7 @@ evalMapSelection m args pos = do
       case M.lookup args' inst of    -- Lookup a cached value
         Just val -> eval val
         Nothing -> do 
-          let rangeType = thunkType (gen $ MapSelection m' args')                    
+          let rangeType = thunkType (gen $ MapSelection m' $ map IndexPoint args')                    
           chosenValue <- generateValue rangeType pos          
           setMapValue r args' chosenValue
           hasConstraints <- gets (not . null . lookupMapConstraints r)
@@ -589,7 +590,8 @@ evalMapSelection m args pos = do
           return chosenValue
     _ -> return m' -- function without arguments (ToDo: is this how it should be handled?)
             
-evalMapUpdate m args new pos = do
+evalMapUpdate :: (Monad m, Functor m) => Expression -> [IndexSelection] -> Expression -> SourcePos -> Execution m Thunk
+evalMapUpdate m (concatMap indexSelectionExprs -> args) new pos = do
   m' <- eval m
   let Reference t r = fromLiteral m'
   args' <- mapM eval args
@@ -602,8 +604,8 @@ evalMapUpdate m args new pos = do
       bv = zip freshVarNames domains
       bvExprs = map (var . fst) bv
       MapType tv domains _ = t
-      appOld = attachPos pos $ MapSelection m' bvExprs
-      appNew = attachPos pos $ MapSelection newM' bvExprs
+      appOld = attachPos pos $ MapSelection m' (map IndexPoint bvExprs)
+      appNew = attachPos pos $ MapSelection newM' (map IndexPoint bvExprs)
       guardNeq = disjunction (zipWith (|!=|) bvExprs args')
       lambda = inheritPos (Quantified Lambda tv bv [])
   extendMapConstraints r $ lambda (guardNeq |=>| (appOld |=| appNew))
@@ -686,7 +688,7 @@ evalEquality pos v1@(Reference t1 r1) v2@(Reference t2 r2) = if r1 == r2
         MapType tv domains range = t1
         freshVarNames = map (\i -> nonIdChar : show i) [0..]
         vars = zip freshVarNames domains                
-        app m = attachPos pos $ MapSelection (lit m) (map (var . fst) vars)
+        app m = attachPos pos $ MapSelection (lit m) (map (IndexPoint . var . fst) vars)
       in evalForall tv vars (app v1 |=| app v2) pos
   where
     lit = attachPos pos . Literal
@@ -710,7 +712,7 @@ evalLambda tv vars e pos = do
   m' <- generateValue t pos
   (Quantified Lambda _ _ _ symBody) <- node <$> evalQuantified (lambda e)
   let var = attachPos pos . Var      
-      app = attachPos pos $ MapSelection m' (map (var . fst) vars)
+      app = attachPos pos $ MapSelection m' (map (IndexPoint . var . fst) vars)
       Reference _ r = fromLiteral m'
   extendMapConstraints r (lambda $ app |=| symBody)
   return m'
@@ -787,8 +789,8 @@ execAssign lhss rhss = do
     rhss' = map snd (zipWith simplifyLeft lhss rhss)
     simplifyLeft (id, []) rhs = (id, rhs)
     simplifyLeft (id, argss) rhs = (id, mapUpdate (gen $ Var id) argss rhs)
-    mapUpdate e [args] rhs = gen $ MapUpdate e args rhs
-    mapUpdate e (args1 : argss) rhs = gen $ MapUpdate e args1 (mapUpdate (gen $ MapSelection e args1) argss rhs)
+    mapUpdate e [args] rhs = gen $ MapUpdate e (map IndexPoint args) rhs
+    mapUpdate e (args1 : argss) rhs = gen $ MapUpdate e (map IndexPoint args1) (mapUpdate (gen $ MapSelection e $ map IndexPoint args1) argss rhs)
     
 execCall name lhss args pos = do
   sig <- procSig name <$> use envTypeContext
@@ -907,6 +909,13 @@ extendLogicalConstraints c = if node c == tt
 -- | 'evalQuantified' @expr@ : evaluate @expr@ modulo quantification
 evalQuantified expr = evalQuantified' [] expr
   where
+    evalQuantifiedIndex' vars (IndexRange x y) = do
+        x' <- evalQuantified' vars x
+        y' <- evalQuantified' vars y
+        return $ IndexRange x' y'
+    evalQuantifiedIndex' vars (IndexPoint x) = do
+        x' <- evalQuantified' vars x
+        return $ IndexPoint x'
     evalQuantified' vars (Pos p e) = attachPos p <$> case e of
       l@(Literal _) -> return l
       l@(Logical t r) -> node <$> evalLogical t r p
@@ -916,23 +925,23 @@ evalQuantified expr = evalQuantified' [] expr
       Application name args -> do
         fs <- use envFunctions
         case M.lookup name fs of
-          Nothing -> node <$> evalQuantified' vars (attachPos p $ MapSelection (functionExpr name p) args)
+          Nothing -> node <$> evalQuantified' vars (attachPos p $ MapSelection (functionExpr name p) (map IndexPoint args))
           Just expr -> do -- non-recursive function with a body: eval the body
             let Quantified Lambda tv bv _ body = node expr
             node <$> evalQuantified' vars (exprSubst (M.fromList $ zip (map fst bv) args) (removeBoundClashes vars body))
       MapSelection m args -> do
         m' <- evalQuantified' vars m
-        args' <- mapM (evalQuantified' vars) args
-        if all (null . freeVars) (m' : args')
+        args' <- mapM (evalQuantifiedIndex' vars) args
+        if all (null . freeVars) (m' : concatMap indexSelectionExprs args')
           then node <$> evalMapSelection m' args' p
           else return $ MapSelection m' args'
-      MapUpdate m args new -> do
-        m' <- evalQuantified' vars m
-        args' <- mapM (evalQuantified' vars) args
-        new' <- evalQuantified' vars new
-        if all (null . freeVars) (m' : new' : args')
-          then node <$> evalMapUpdate m' args' new' p
-          else return $ MapUpdate m' args' new'   
+--      MapUpdate m args new -> do
+--        m' <- evalQuantified' vars m
+--        args' <- mapM (evalQuantifiedIndex' vars) args
+--        new' <- evalQuantified' vars new
+--        if all (null . freeVars) (m' : new' : concatMap indexSelectionExprs args')
+--          then node <$> evalMapUpdate m' args' new' p
+--          else return $ MapUpdate m' args' new'   
       Old e -> node <$> old (evalQuantified' vars e)
       IfExpr cond e1 e2 -> do
         cond' <- evalQuantified' vars cond

@@ -49,7 +49,7 @@ power (MapUpdate _ _ _) = 9
 power (Coercion _ _) = 8
 power (UnaryExpression _ _) = 7
 power (BinaryExpression op _ _) 
-  | op `elem` [Times, Div, Mod] = 6 
+  | op `elem` [Concat,Times, Div, Mod] = 6 
   | op `elem` [Plus, Minus] = 5
   | op `elem` [Eq, Neq, Ls, Leq, Gt, Geq, Lc] = 3
   | op `elem` [And, Or] = 2
@@ -68,8 +68,8 @@ exprDocAt n (Pos _ e) = condParens (n' <= n) (
     Logical t r -> logDoc r
     Var id -> text id
     Application id args -> text id <> parens (commaSep (map exprDoc args))
-    MapSelection m args -> exprDocAt n' m <> brackets (commaSep (map exprDoc args))
-    MapUpdate m args val -> exprDocAt n' m <> brackets (commaSep (map exprDoc args) <+> text ":=" <+> exprDoc val)
+    MapSelection m args -> exprDocAt n' m <> brackets (commaSep $ map indexSelectionDoc args)
+    MapUpdate m args val -> exprDocAt n' m <> brackets (commaSep (map indexSelectionDoc args) <+> text ":=" <+> exprDoc val)
     Old e -> text "old" <+> parens (exprDoc e)
     IfExpr cond e1 e2 -> text "if" <+> exprDoc cond <+> text "then" <+> exprDoc e1 <+> text "else" <+> exprDoc e2
     Coercion e t -> exprDocAt n' e <+> text ":" <+> pretty t
@@ -79,6 +79,10 @@ exprDocAt n (Pos _ e) = condParens (n' <= n) (
   )
   where
     n' = power e
+
+indexSelectionDoc :: IndexSelection -> Doc
+indexSelectionDoc (IndexRange x y) = exprDoc x <> text ":" <> exprDoc y
+indexSelectionDoc (IndexPoint x) = exprDoc x
 
 qTriggerAttsDoc :: QTriggerAttribute -> Doc
 qTriggerAttsDoc (Left trggs) = braces $ commaSep $ map pretty trggs

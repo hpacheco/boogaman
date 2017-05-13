@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ViewPatterns, FlexibleContexts #-}
 
 -- | Type checker for Boogie 2
 module Language.Boogie.TypeChecker (
@@ -340,8 +340,8 @@ checkApplication name args = do
         Nothing -> typeMismatch (text "formal argument types") argTypes (text "actual argument types") actualTypes (text "in the call to" <+> text name)
         Just u -> return $ typeSubst u newRetType      
     
-checkMapSelection :: Expression -> [Expression] -> Typing Type
-checkMapSelection m args = do
+checkMapSelection :: Expression -> [IndexSelection] -> Typing Type
+checkMapSelection m (concatMap indexSelectionExprs -> args) = do
   mType <- locally $ checkExpression m
   selectTypes <- mapAccum (locally . checkExpression) noneType args
   case mType of
@@ -358,8 +358,8 @@ checkMapSelection m args = do
         -- t is a free variable:
         Just u -> return $ typeSubst u freshRange
   
-checkMapUpdate :: Expression -> [Expression] -> Expression -> Typing Type
-checkMapUpdate m args val = do
+checkMapUpdate :: Expression -> [IndexSelection] -> Expression -> Typing Type
+checkMapUpdate m (concatMap indexSelectionExprs -> args) val = do
   mType <- locally $ checkExpression m
   selectTypes <- mapAccum (locally . checkExpression) noneType args
   updateType <- locally $ checkExpression val
@@ -412,6 +412,7 @@ checkUnaryExpression op e
   
 checkBinaryExpression :: BinOp -> Expression -> Expression -> Typing Type
 checkBinaryExpression op e1 e2
+  | elem op [Concat] = matchOperands IntType IntType IntType
   | elem op [Plus, Minus, Times, Div, Mod] = matchOperands IntType IntType IntType
   | elem op [And, Or, Implies, Explies, Equiv] = matchOperands BoolType BoolType BoolType
   | elem op [Ls, Leq, Gt, Geq] = matchOperands IntType IntType BoolType

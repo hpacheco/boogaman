@@ -1,3 +1,5 @@
+{-# LANGUAGE ViewPatterns #-}
+
 module Language.Boogie.Z3.Eval (evalExpr) where
 
 import           Control.Applicative
@@ -33,11 +35,11 @@ evalExpr' boundMap typeCtx expr = debug ("evalExpr': " ++ show expr) >>
                         " in ", show boundMap]
       Literal v -> evalValue v
       Logical t ref -> uses refMap (lookup' "evalExpr'" (LogicRef t ref))
-      MapSelection m args ->
+      MapSelection m (concatMap indexSelectionExprs -> args) ->
           do m' <- go m
              arg <- tupleArg args
              mkSelect m' arg
-      MapUpdate m args val ->
+      MapUpdate m (concatMap indexSelectionExprs -> args) val ->
           do m' <- go m
              arg <- tupleArg args
              val' <- go val

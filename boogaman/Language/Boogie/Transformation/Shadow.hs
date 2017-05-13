@@ -464,6 +464,15 @@ shadowDuals f (True:bs) (e:es) = do
     return (e:e':es')
 shadowDuals f bs es = error "shadowDuals: mismatching arguments"
 
+shadowIndexSelection :: MonadIO m => Options -> ShadowEMode -> IndexSelection -> ShadowM m IndexSelection
+shadowIndexSelection opts mode (IndexRange x y) = do
+    x' <- shadowExpression opts mode x
+    y' <- shadowExpression opts mode y
+    return $ IndexRange x' y'
+shadowIndexSelection opts mode (IndexPoint x) = do
+    x' <- shadowExpression opts mode x
+    return $ IndexPoint x'
+
 shadowBareExpression :: MonadIO m => SourcePos -> Options -> ShadowEMode -> BareExpression -> ShadowM m BareExpression
 shadowBareExpression p opts mode (isLeakageExpr opts -> Just e') = shadowBareExpression p opts mode e'
 shadowBareExpression p opts mode (isFreeExpr opts -> Just e') = shadowBareExpression p opts mode e'
@@ -526,11 +535,11 @@ shadowBareExpression p opts ShadowE e@(Application name@(isLeakFunName opts -> F
     return $ Application name' es'
 shadowBareExpression p opts mode (MapSelection m es) = do
     m' <- shadowExpression opts mode m
-    es' <- mapM (shadowExpression opts mode) es
+    es' <- mapM (shadowIndexSelection opts mode) es
     return $ MapSelection m' es'
 shadowBareExpression p opts mode (MapUpdate m es r) = do
     m' <- shadowExpression opts mode m
-    es' <- mapM (shadowExpression opts mode) es
+    es' <- mapM (shadowIndexSelection opts mode) es
     r' <- shadowExpression opts mode r
     return $ MapUpdate m' es' r'
 shadowBareExpression p opts m@(isDualE -> False) (Quantified o alphas args trggs e) = withExemptions $ do

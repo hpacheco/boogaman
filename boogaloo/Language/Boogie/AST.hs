@@ -66,7 +66,7 @@ data UnOp = Neg | Not
   deriving (Eq, Ord, Data, Typeable,Show)
 
 -- | Binary operators  
-data BinOp = Plus | Minus | Times | Div | Mod | And | Or | Implies | Explies | Equiv | Eq | Neq | Lc | Ls | Leq | Gt | Geq
+data BinOp = Plus | Minus | Times | Div | Mod | And | Or | Implies | Explies | Equiv | Eq | Neq | Lc | Ls | Leq | Gt | Geq | Concat
   deriving (Eq, Ord, Data, Typeable,Show)
 
 -- | Quantifiers
@@ -85,8 +85,8 @@ data BareExpression =
   Var Id |                                        -- ^ 'Var' @name@
   Logical Type Ref |                              -- ^ Logical variable
   Application Id [Expression] |                   -- ^ 'Application' @f args@
-  MapSelection Expression [Expression] |          -- ^ 'MapSelection' @map indexes@
-  MapUpdate Expression [Expression] Expression |  -- ^ 'MapUpdate' @map indexes rhs@
+  MapSelection Expression [IndexSelection] |          -- ^ 'MapSelection' @map indexes@
+  MapUpdate Expression [IndexSelection] Expression |  -- ^ 'MapUpdate' @map indexes rhs@
   Old Expression |
   IfExpr Expression Expression Expression |       -- ^ 'IfExpr' @cond eThen eElse@
   Coercion Expression Type |
@@ -95,8 +95,14 @@ data BareExpression =
   Quantified QOp [Id] [IdType] [QTriggerAttribute] Expression         -- ^ 'Quantified' @qop type_vars bound_vars triggers expr@
   deriving (Eq, Ord, Data, Typeable,Show)  -- syntactic equality
   
+data IndexSelection = IndexRange Expression Expression | IndexPoint Expression
+  deriving (Eq, Ord, Data, Typeable,Show)
+  
+indexSelectionExprs (IndexRange x y) = [x,y]
+indexSelectionExprs (IndexPoint x) = [x]
+  
 -- | 'mapSelectExpr' @m args@ : map selection expression with position of @m@ attached
-mapSelectExpr m args = attachPos (position m) (MapSelection m args)  
+mapSelectExpr m args = attachPos (position m) (MapSelection m $ map IndexPoint args)  
 
 ff = Literal (BoolValue False)
 tt = Literal (BoolValue True)
@@ -207,16 +213,18 @@ type MapRepr = Map [Value] Value
 emptyMap = M.empty
   
 -- | Run-time value
-data Value = IntValue Integer |  -- ^ Integer value
-  BoolValue Bool |               -- ^ Boolean value
-  CustomValue Type Ref |         -- ^ Value of a user-defined type
-  Reference Type Ref |           -- ^ Map reference
-  BitvectorValue Integer Int     -- ^ Bitvector value
+data Value = IntValue Integer  -- ^ Integer value
+  | BoolValue Bool               -- ^ Boolean value
+  | CustomValue Type Ref         -- ^ Value of a user-defined type
+  | Reference Type Ref           -- ^ Map reference
+  | BitvectorValue Integer Int     -- ^ Bitvector value
+  | PowerValue Integer Integer
   deriving (Eq, Ord, Data,Show,Typeable)
   
 -- | Type of a value
 valueType :: Value -> Type
 valueType (BitvectorValue i ws) = BitvectorType ws
+valueType (PowerValue i pow) = IntType
 valueType (IntValue _) = IntType
 valueType (BoolValue _) = BoolType
 valueType (CustomValue t _) = t
