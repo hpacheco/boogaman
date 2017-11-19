@@ -239,7 +239,7 @@ expression :: Parser Expression
 expression = P.buildExpressionParser table coercionExpression <?> "expression"
 
 table = [[unOp Neg, unOp Not],
-     [binOp Concat P.AssocLeft,binOp Times P.AssocLeft, binOp Div P.AssocLeft, binOp Mod P.AssocLeft],
+     [binOp Concat P.AssocLeft,binOp Times P.AssocLeft, binOp Division P.AssocLeft,binOp Div P.AssocLeft, binOp Mod P.AssocLeft],
      [binOp Plus P.AssocLeft, binOp Minus P.AssocLeft],
      [binOp Eq P.AssocNone, binOp Neq P.AssocNone, binOp Ls P.AssocNone, binOp Leq P.AssocNone, binOp Gt P.AssocNone, binOp Geq P.AssocNone, binOp Lc P.AssocNone],
      [binOp And P.AssocLeft], -- ToDo: && and || on the same level but do not interassociate

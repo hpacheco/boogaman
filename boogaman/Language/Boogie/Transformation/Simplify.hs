@@ -364,7 +364,7 @@ instance Simplify BareStatement where
             Nothing -> return Nothing
             Just spec'@(SpecClause st' isAssume' (Pos l' e')) -> do
                 case isLeakageExpr opts e' of
-                    Just e'' -> return $ Just $ Predicate (atts'++[leakageAtt]) (SpecClause st' isAssume' $ Pos l' e'')
+                    Just (e'',isOut) -> return $ Just $ Predicate (atts'++[leakageAtt isOut]) (SpecClause st' isAssume' $ Pos l' e'')
                     Nothing -> return $ Just $ Predicate atts' spec'
     simplify (Assign lhs rhs) = do
         lhs' <- mapM simplifyId lhs

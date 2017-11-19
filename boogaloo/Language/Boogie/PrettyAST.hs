@@ -49,7 +49,7 @@ power (MapUpdate _ _ _) = 9
 power (Coercion _ _) = 8
 power (UnaryExpression _ _) = 7
 power (BinaryExpression op _ _) 
-  | op `elem` [Concat,Times, Div, Mod] = 6 
+  | op `elem` [Concat,Times, Div, Division,Mod] = 6 
   | op `elem` [Plus, Minus] = 5
   | op `elem` [Eq, Neq, Ls, Leq, Gt, Geq, Lc] = 3
   | op `elem` [And, Or] = 2

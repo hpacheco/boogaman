@@ -166,21 +166,44 @@ instance Monoid PublicType where
     mappend PublicOut y = PublicOut
     mappend PublicMid PublicMid = PublicMid
 
-leakageAtt :: Attribute
-leakageAtt = (Attribute "leakage" [])
+leakageAtt :: Bool -> Attribute
+leakageAtt False = (Attribute "leakage" [])
+leakageAtt True = (Attribute "leakageout" [])
 
-hasLeakageAtt :: [Attribute] -> Bool
-hasLeakageAtt = any isLeakageAtt
+hasLeakageAtt :: [Attribute] -> Maybe Bool
+hasLeakageAtt = foldr appendLeakage Nothing . map isLeakageAtt
 
-isLeakageAtt :: Attribute -> Bool
-isLeakageAtt (Attribute "leakage" []) = True
-isLeakageAtt _ = False
+appendLeakage :: Maybe Bool -> Maybe Bool -> Maybe Bool
+appendLeakage x Nothing = x
+appendLeakage Nothing y = y
+appendLeakage (Just x) (Just y) = Just (x || y)
 
-hasLeakageAnn :: Data a => Options -> a -> Bool
-hasLeakageAnn opts s = hasLeakName opts s || isJust (hasPublic opts s) || isJust (hasDeclassified opts s) || isJust (hasLeak opts s)
+isLeakageAtt :: Attribute -> Maybe Bool
+isLeakageAtt (Attribute "leakage" []) = Just False
+isLeakageAtt (Attribute "leakageout" []) = Just True
+isLeakageAtt _ = Nothing
 
-hasLeakageFunAnn :: Data a => Options -> a -> Bool
-hasLeakageFunAnn opts s = hasLeakFunName opts s || isJust (hasPublic opts s) || isJust (hasDeclassified opts s) || isJust (hasLeak opts s)
+hasLeakageAnn :: Data a => Options -> a -> Maybe Bool
+hasLeakageAnn opts s = if isOut
+    then Just True
+    else
+        if hasLeakName opts s || isJust (hasPublic opts s) || isJust declassifies || isJust (hasLeak opts s)
+            then Just False
+            else Nothing
+  where
+    declassifies = (hasDeclassified opts s)
+    isOut = maybe False (not . Map.null . Map.filter (\x -> x)) declassifies
+
+hasLeakageFunAnn :: Data a => Options -> a -> Maybe Bool
+hasLeakageFunAnn opts s = if isOut
+    then Just True
+    else
+        if hasLeakFunName opts s || isJust (hasPublic opts s) || isJust declassifies || isJust (hasLeak opts s)
+            then Just False
+            else Nothing
+  where
+     declassifies = (hasDeclassified opts s)
+     isOut = maybe False (not . Map.null . Map.filter (\x -> x)) declassifies
 
 isLeakFunName opts str = isSuffixOf "ShadowFun" str || isSuffixOf "ShadowLemma" str || isSuffixOf "ShadowAxiom" str || isSuffixOf "ShadowProc" str
 --isLemmaFunName opts = isSubsequenceOf "Lemma"
@@ -246,8 +269,9 @@ isPublicIdExpr :: Options -> BareExpression -> Maybe (Id,PublicType)
 isPublicIdExpr vc (isPublicExpr vc -> Just (Var i,t)) = Just (i,t)
 isPublicIdExpr vc e = Nothing
 
-isLeakageExpr :: Options -> BareExpression -> Maybe BareExpression
-isLeakageExpr vc (isAnn vc False False "Leakage" -> Just i) = Just i
+isLeakageExpr :: Options -> BareExpression -> Maybe (BareExpression,Bool)
+isLeakageExpr vc (isAnn vc False False "Leakage" -> Just i) = Just (i,False)
+isLeakageExpr vc (isAnn vc False False "LeakageOut" -> Just i) = Just (i,True)
 isLeakageExpr vc _ = Nothing
 
 isLeakExpr :: Options -> BareExpression -> Maybe BareExpression
@@ -266,7 +290,7 @@ removeLeakageAnns opts noUser = everywhere (mkT removeLeakageExpr)
     removeLeakageExpr (isPublicExpr opts -> Just _) = tt
     removeLeakageExpr (isLeakExpr opts -> Just _) = tt
     removeLeakageExpr (isDeclassifiedExpr opts -> Just _) = tt
-    removeLeakageExpr (isLeakageExpr opts -> Just x) = x
+    removeLeakageExpr (isLeakageExpr opts -> Just (x,_)) = x
     removeLeakageExpr e@(Application name@(isLeakFunName opts -> True) _) | noUser = tt
     removeLeakageExpr e@(hasLeakFunName opts -> True) | noUser = error $ "user-defined leakage functions not supported on non-dual mode: " ++ show (pretty e)
     removeLeakageExpr e = case replaceFreesMb opts e of

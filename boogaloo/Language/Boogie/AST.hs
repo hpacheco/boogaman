@@ -66,7 +66,7 @@ data UnOp = Neg | Not
   deriving (Eq, Ord, Data, Typeable,Show)
 
 -- | Binary operators  
-data BinOp = Plus | Minus | Times | Div | Mod | And | Or | Implies | Explies | Equiv | Eq | Neq | Lc | Ls | Leq | Gt | Geq | Concat
+data BinOp = Plus | Minus | Times | Div | Mod | And | Or | Implies | Explies | Equiv | Eq | Neq | Lc | Ls | Leq | Gt | Geq | Concat | Division
   deriving (Eq, Ord, Data, Typeable,Show)
 
 -- | Quantifiers

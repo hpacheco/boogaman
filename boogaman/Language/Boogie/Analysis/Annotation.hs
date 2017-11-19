@@ -61,7 +61,7 @@ dafnyAxioms withModules name = dafnyFrameAxioms ++ dafnyConsqAxioms
     dafnyConsqAxioms = ["// consequence axiom for "++dafnyPrelude withModules++".__default."++name]
 
 dafnyNames :: [String]
-dafnyNames = ["PublicIn","PublicOut","PublicMid","DeclassifiedIn","DeclassifiedOut","Leak","Leakage","Free"]
+dafnyNames = ["PublicIn","PublicOut","PublicMid","DeclassifiedIn","DeclassifiedOut","Leak","Leakage","LeakageOut","Free"]
 
 isDafnyAnn :: Options -> String -> Bool
 isDafnyAnn (dafnyVCGen -> Just withModules) n = List.elem n (dafnyAnns withModules)
@@ -128,6 +128,7 @@ replaceCanCallMb opts (isAnn opts False True "Leak#canCall" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False True "DeclassifiedIn#canCall" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False True "DeclassifiedOut#canCall" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False False "Leakage#canCall" -> Just i) = Just tt
+replaceCanCallMb opts (isAnn opts False False "LeakageOut#canCall" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False False "Free#canCall" -> Just i) = Just tt
 
 replaceCanCallMb opts (isAnn opts False True "PublicIn#requires" -> Just i) = Just tt
@@ -137,6 +138,7 @@ replaceCanCallMb opts (isAnn opts False True "Leak#requires" -> Just i) = Just t
 replaceCanCallMb opts (isAnn opts False True "DeclassifiedIn#requires" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False True "DeclassifiedOut#requires" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False False "Leakage#requires" -> Just i) = Just tt
+replaceCanCallMb opts (isAnn opts False False "LeakageOut#requires" -> Just i) = Just tt
 replaceCanCallMb opts (isAnn opts False False "Free#requires" -> Just i) = Just tt
 
 replaceCanCallMb opts e = Nothing

@@ -33,7 +33,7 @@ data ShadowSt = ShadowSt
     , variables :: Set Id -- defined variables
     , exemptions :: Set Id -- variables not to be shadowed
     , typeExemptions :: Type -> Bool -- types not to be shadowed
-    , shadowOk :: Maybe Id -- leakage aggregator variable
+    , shadowAsserts :: Maybe [BareStatement] -- leakage output assertions aggregator
     , procedures :: Map Id ([Bool],[Bool],Set Id,Leakage) -- mapping from procedure name to (modifies clauses,leakage)
     , functions :: Map Id [Bool] -- mapping from function name to sequence of (shadowed or not) arguments
     , fullProd :: Bool -- perform full product or normal product
@@ -85,7 +85,7 @@ ppDecl opts d@(FunctionDecl atts name targs args ret body) = strace opts ("pp fu
     State.modify $ \st -> st { functions = Map.insert name (map (isPrivateFArg opts) args) (functions st) }
     return d
 ppDecl opts d@(AxiomDecl atts e) = strace opts ("pp axiom ") $ do
-    let atts' = if hasLeakageFunAnn opts e then Attribute "leakage" [] : atts else atts
+    let atts' = if isJust (hasLeakageFunAnn opts e) then Attribute "leakage" [] : atts else atts
     return $ AxiomDecl atts' e
 ppDecl opts d = return d
 
@@ -176,7 +176,7 @@ shadowBareDecl opts d@(ConstantDecl atts unique ids t orderSpec complete) = do -
     orderSpec' <- shadowParentInfo opts orderSpec
     ids' <- concatMapM (shadowConstId opts) ids
     return [ConstantDecl atts' unique ids' t orderSpec' complete]
-shadowBareDecl opts d@(AxiomDecl atts e) = if hasLeakageAtt atts
+shadowBareDecl opts d@(AxiomDecl atts e) = if isJust (hasLeakageAtt atts)
     then do
         atts' <- concatMapM (shadowAttribute opts True) atts
         e' <- shadowExpression opts DualE e
@@ -193,19 +193,13 @@ shadowBareDecl opts d@(ProcedureDecl atts name targs args rets contracts body) =
         -- duplicate parameters, returns and contracts
         args' <- concatMapM (uncurry $ shadowIdTypeWhere opts) $ zip (map boolToDual bools) args
         rets' <- concatMapM (uncurry $ shadowIdTypeWhere opts) $ zip (map boolToDual rbools) rets
-        contracts' <- concatMapM (shadowCommentOrContract opts name DualE) contracts
+        (concat -> contracts',concat -> shadowrequires) <- liftM unzip $ mapM (shadowCommentOrContract opts name DualE) contracts
         
-        -- create a fresh shadow assertion variable
-        shadow_ok <- freshVariable "shadow_ok"
-        -- declare shadow_ok at the start
-        let defShadow = IdTypeWhere shadow_ok BoolType $ Pos noPos tt
-        let initShadow = Pos noPos $ Assign [(shadow_ok,[])] [posTT]
-        
-        State.modify $ \st -> st { shadowOk = Just shadow_ok }
+        State.modify $ \st -> st { shadowAsserts = Just shadowrequires }
         body' <- mapM (shadowBody opts modifies leaks True) body
-        State.modify $ \st -> st { shadowOk = Nothing }
+        State.modify $ \st -> st { shadowAsserts = Nothing }
         
-        let d' = ProcedureDecl atts' name' targs args' rets' contracts' (addMaybeBody defShadow initShadow body')
+        let d' = ProcedureDecl atts' name' targs args' rets' contracts' body' --(addMaybeBody defShadow initShadow body')
         return [d']
     else do
         (bools,rbools,modifies,leaks) <- getProcedure name
@@ -214,7 +208,7 @@ shadowBareDecl opts d@(ProcedureDecl atts name targs args rets contracts body) =
         -- duplicate parameters, returns and contracts
         args' <- concatMapM (shadowIdTypeWhere opts $ Just False) args
         rets' <- concatMapM (shadowIdTypeWhere opts $ Just False) rets
-        contracts' <- concatMapM (shadowCommentOrContract opts name ShadowE) contracts
+        (concat -> contracts',concat -> []) <- liftM unzip $ mapM (shadowCommentOrContract opts name ShadowE) contracts
         
         body' <- mapM (shadowBody opts modifies leaks False) body
         
@@ -229,16 +223,16 @@ shadowBareDecl opts d@(ImplementationDecl atts name targs args rets body) = stra
         rets' <- concatMapM (uncurry $ shadowIdType opts) $ zip rbools rets
         
         -- create a fresh shadow assertion variable
-        shadow_ok <- freshVariable "shadow_ok"
+        --shadow_ok <- freshVariable "shadow_ok"
         -- declare shadow_ok at the start
-        let defShadow = IdTypeWhere shadow_ok BoolType $ Pos noPos tt
-        let initShadow = Pos noPos $ Assign [(shadow_ok,[])] [posTT]
+--        let defShadow = IdTypeWhere shadow_ok BoolType $ Pos noPos tt
+  --      let initShadow = Pos noPos $ Assign [(shadow_ok,[])] [posTT]
         
-        State.modify $ \st -> st { shadowOk = Just shadow_ok }
+        State.modify $ \st -> st { shadowAsserts = Just [] }
         body' <- mapM (shadowBody opts modifies leaks True) body
-        State.modify $ \st -> st { shadowOk = Nothing }
+        State.modify $ \st -> st { shadowAsserts = Nothing }
             
-        let d' = ImplementationDecl atts' name' targs args' rets' (addBodies defShadow initShadow body')
+        let d' = ImplementationDecl atts' name' targs args' rets' body' --(addBodies defShadow initShadow body')
         return [d']
     else strace opts ("shadowing implementation of " ++ show (pretty name)) $ do
         (bools,rbools,modifies,leaks) <- getProcedure name
@@ -315,9 +309,10 @@ shadowBlock opts modifies leaks isDual b = do
     if isDual
         then do
             -- assert shadow_ok before the last return
-            Just shadow_ok <- liftM shadowOk State.get
-            let assert = Predicate [] $ SpecClause Inline False $ Pos noPos $ Var shadow_ok
-            let bb'' = updLast (\(l,ss) -> (l,Right (Pos noPos assert) : ss)) bb'
+            --Just shadow_ok <- liftM shadowOk State.get
+            Just shadow_asserts <- liftM shadowAsserts State.get
+            --let assert = Predicate [] $ SpecClause Inline False $ Pos noPos $ Var shadow_ok
+            let bb'' = updLast (\(l,ss) -> (l,map (Right . Pos noPos) shadow_asserts ++ ss)) bb'
             return (fromBasicBlocks bb'')
         else return (fromBasicBlocks bb')
 
@@ -335,40 +330,43 @@ shadowBasicBlocks opts modifies leaks False bs = do
     bbs' <- forM bbs $ \(bb,next) -> prodBasicBlocks opts ShadowE bb
     return $ concat bbs'
 
-shadowCommentOrContract :: MonadIO m => Options -> Id -> ShadowEMode -> Either Comment Contract -> ShadowM m [Either Comment Contract]
-shadowCommentOrContract opts proc mode (Left c) = return [Left c]
+shadowCommentOrContract :: MonadIO m => Options -> Id -> ShadowEMode -> Either Comment Contract -> ShadowM m ([Either Comment Contract],[BareStatement])
+shadowCommentOrContract opts proc mode (Left c) = return ([Left c],[])
 shadowCommentOrContract opts proc mode (Right c) = do
-    cs' <- shadowContract opts proc mode c
-    return $ map Right cs'
+    (cs1,cs2) <- shadowContract opts proc mode c
+    return (map Right cs1,cs2)
 
-shadowContract :: MonadIO m => Options -> Id -> ShadowEMode -> Contract -> ShadowM m [Contract]
-shadowContract opts proc DualE c@(Requires free e) | hasLeakageFunAnn opts e = do
+shadowContract :: MonadIO m => Options -> Id -> ShadowEMode -> Contract -> ShadowM m ([Contract],[BareStatement])
+shadowContract opts proc DualE c@(Requires free (Pos p (isLeakageExpr opts -> Just (e,True)))) = do
+    e' <- shadowBareExpression p opts DualE e
+    return ([],[Predicate [] $ SpecClause Inline free $ Pos p e'])
+shadowContract opts proc DualE c@(Requires free e) | isJust (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts DualE e
-    return [Requires free e']
-shadowContract opts proc DualE c@(Requires free e) | not (hasLeakageFunAnn opts e) = do
+    return ([Requires free e'],[])
+shadowContract opts proc DualE c@(Requires free e) | isNothing (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts ShadowE e
-    return [removeLeakageAnns opts True c,Requires free e']
-shadowContract opts proc ShadowE c@(Requires free e) | not (hasLeakageFunAnn opts e) = do
+    return ([removeLeakageAnns opts True c,Requires free e'],[])
+shadowContract opts proc ShadowE c@(Requires free e) | isNothing (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts ShadowE e
-    return [Requires free e']
+    return ([Requires free e'],[])
 shadowContract opts proc ShadowDualE c@(Requires free e) = do
     e' <- shadowExpression opts ShadowDualE e
-    return [removeLeakageAnns opts True c,Requires free e']
-shadowContract opts proc DualE c@(Ensures free e) | hasLeakageFunAnn opts e = do
+    return ([removeLeakageAnns opts True c,Requires free e'],[])
+shadowContract opts proc DualE c@(Ensures free e) | isJust (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts DualE e
-    return [Ensures free e']
-shadowContract opts proc DualE c@(Ensures free e) | not (hasLeakageFunAnn opts e) = do
+    return ([Ensures free e'],[])
+shadowContract opts proc DualE c@(Ensures free e) | isNothing (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts ShadowE e
-    return [removeLeakageAnns opts True c,Ensures free e']
-shadowContract opts proc ShadowE c@(Ensures free e) | not (hasLeakageFunAnn opts e) = do
+    return ([removeLeakageAnns opts True c,Ensures free e'],[])
+shadowContract opts proc ShadowE c@(Ensures free e) | isNothing (hasLeakageFunAnn opts e) = do
     e' <- shadowExpression opts ShadowE e
-    return [Ensures free e']
+    return ([Ensures free e'],[])
 shadowContract opts proc ShadowDualE c@(Ensures free e) = do
     e' <- shadowExpression opts ShadowDualE e
-    return [removeLeakageAnns opts True c,Ensures free e']
+    return ([removeLeakageAnns opts True c,Ensures free e'],[])
 shadowContract opts proc mode c@(Modifies free ids) = do
     ids' <- mapM (shadowId opts mode) ids
-    return [Modifies free (List.nub $ (if isDualMode mode then ids else [])++ids')]
+    return ([Modifies free (List.nub $ (if isDualMode mode then ids else [])++ids')],[])
 shadowContract opts proc mode c = error $ show $ text "shadowContract:" <+> text (show mode) <+> pretty c
 
 shadowConstId :: MonadIO m => Options -> Id -> ShadowM m [Id]
@@ -474,10 +472,10 @@ shadowIndexSelection opts mode (IndexPoint x) = do
     return $ IndexPoint x'
 
 shadowBareExpression :: MonadIO m => SourcePos -> Options -> ShadowEMode -> BareExpression -> ShadowM m BareExpression
-shadowBareExpression p opts mode (isLeakageExpr opts -> Just e') = shadowBareExpression p opts mode e'
+shadowBareExpression p opts mode (isLeakageExpr opts -> Just (e',isOut)) = shadowBareExpression p opts mode e'
 shadowBareExpression p opts mode (isFreeExpr opts -> Just e') = shadowBareExpression p opts mode e'
-shadowBareExpression p opts ShadowE e | hasLeakageFunAnn opts e = error $ show $ text (show p) <+> text "unsupported leakage expression" <+> pretty e <+> text "in ShadowE mode"
-shadowBareExpression p opts DualE e | not (hasLeakageFunAnn opts e) = strace opts ("shadowing a non-leakage expression " ++ show (pretty e)) $ do
+shadowBareExpression p opts ShadowE e | isJust (hasLeakageFunAnn opts e) = error $ show $ text (show p) <+> text "unsupported leakage expression" <+> pretty e <+> text "in ShadowE mode"
+shadowBareExpression p opts DualE e | isNothing (hasLeakageFunAnn opts e) = strace opts ("shadowing a non-leakage expression " ++ show (pretty e)) $ do
     e' <- shadowBareExpression p opts ShadowE e
     return $ BinaryExpression And (Pos noPos $ gReplaceFrees opts e) (Pos noPos e')
 shadowBareExpression p opts (isDualMode -> True) e@(Application n@(isLeakFunName opts -> True) es) = do
@@ -574,7 +572,7 @@ shadowBareExpression p opts m e = error $ show $ text (show p) <+> text "express
 
 shadowQTriggerAttribute :: MonadIO m => Options -> Bool -> [Id] -> QTriggerAttribute -> ShadowM m [QTriggerAttribute]
 shadowQTriggerAttribute opts True vars t@(Left trggs) = do
-    let sha e = if hasLeakageAnn opts e
+    let sha e = if isJust (hasLeakageAnn opts e)
                     then liftM (:[]) (shadowExpression opts DualE $ removeLeakageAnns opts False e)
                     else liftM (\e' -> [e,e']) (shadowExpression opts ShadowE $ removeLeakageAnns opts True e)
     liftM (maybe [] ((:[]) . Left) . cleanTrigger (Just vars)) $ concatMapM sha trggs
@@ -699,7 +697,7 @@ shadowAttribute opts doDual (Attribute tag vals) = do
     shadowAttrVal opts False v@(EAttr e) = do
         v' <- liftM EAttr $ shadowExpression opts ShadowE $ removeLeakageAnns opts True e
         return $ cleanAttrVals Nothing [v']
-    shadowAttrVal opts True v@(EAttr e) = if hasLeakageAnn opts e
+    shadowAttrVal opts True v@(EAttr e) = if isJust (hasLeakageAnn opts e)
         then do
             v' <- liftM EAttr $ shadowExpression opts DualE $ removeLeakageAnns opts False e
             return $ cleanAttrVals Nothing [v']
@@ -721,37 +719,50 @@ freePred opts p@(Predicate atts spec@(SpecClause st isAssume (Pos l e))) = case 
     Just e' -> (Predicate atts (SpecClause st True (Pos l e')))
     Nothing -> p
 
-leakagePred :: Options -> BareStatement -> Maybe BareStatement
+leakagePred :: Options -> BareStatement -> Maybe (BareStatement,Bool)
 leakagePred opts (freePred opts -> p@(Predicate atts spec@(SpecClause st isAssume (Pos l e)))) = case isLeakageExpr opts e of
-    Nothing -> if hasLeakageAtt atts || hasLeakageFunAnn opts e then Just p else Nothing
-    Just e' -> Just $ Predicate atts (SpecClause st isAssume (Pos l e'))
+    Nothing -> case hasLeakageFunAnn opts e of
+        Just isOut -> Just (p,isOut)
+        Nothing -> case hasLeakageAtt atts of
+            Just isOut -> Just (p,isOut)
+            Nothing -> Nothing
+    Just (e',isOut) -> Just (Predicate atts (SpecClause st isAssume (Pos l e')),isOut)
 
 shadowPredicate :: MonadIO m => SourcePos -> Options -> ShadowEMode -> BareStatement -> ShadowM m [BareStatement]
-shadowPredicate p opts mode@(isDualMode -> True) s@(leakagePred opts -> Just (Predicate atts spec@(SpecClause st isAssume (Pos _ (isPublicExpr opts -> Just (l,ty)))))) = do
+shadowPredicate p opts mode@(isDualMode -> True) s@(leakagePred opts -> Just (Predicate atts spec@(SpecClause st isAssume (Pos _ (isPublicExpr opts -> Just (l,isPub)))),isOut1)) = do
     l' <- shadowBareExpression p opts ShadowE l
-    Just shadow_ok <- liftM shadowOk State.get
-    let implies = case ty of
-                    PublicMid -> if isDualE mode then id else Pos noPos . BinaryExpression Implies (Pos noPos $ Var shadow_ok)
-                    otherwise -> id
+--    Just shadow_ok <- liftM shadowOk State.get
+    let isOut = isPub == PublicMid || isOut1
     let e' = Pos noPos $ BinaryExpression Eq (Pos noPos l) (Pos noPos l')
-    let spec' = SpecClause st isAssume $ implies e'
-    return [Predicate atts spec']
-shadowPredicate p opts mode@(isDualMode -> True) s@(leakagePred opts -> Just (Predicate atts spec@(SpecClause st False (Pos _ (isDeclassifiedExpr opts -> Just (l,ty)))))) = do
+    let spec' = SpecClause st isAssume e'
+    let pr' = Predicate atts spec'
+    if isOut
+        then do -- delay assertion 
+            addShadowAssert pr'
+            return []
+        else return [pr']
+shadowPredicate p opts mode@(isDualMode -> True) s@(leakagePred opts -> Just (Predicate atts spec@(SpecClause st False (Pos _ (isDeclassifiedExpr opts -> Just (l,isOut2)))),isOut1)) = do
     l' <- shadowBareExpression p opts ShadowE l
     let e' = Pos noPos $ BinaryExpression Eq (Pos noPos l) (Pos noPos l')
-    if ty
+    let pr' = Predicate atts $ SpecClause st False e'
+    let isOut = isOut1 || isOut2
+    if isOut
         then do -- delay assertion of equality
-            Just shadow_ok <- liftM shadowOk State.get
-            return [Assign [(shadow_ok,[])] [Pos noPos $ BinaryExpression And (Pos noPos $ Var shadow_ok) e'] ]
+            addShadowAssert pr'
+            return []
         else do -- in-place assertion of equality
-            return [Predicate atts $ SpecClause st False e']
-shadowPredicate p opts mode@(isDualMode -> True) pr@(leakagePred opts -> Just (Predicate atts (SpecClause st isAssume e))) = do
+            return [pr']
+shadowPredicate p opts mode@(isDualMode -> True) pr@(leakagePred opts -> Just (Predicate atts (SpecClause st isAssume e),isOut)) = do
     e' <- shadowExpression opts DualE e
     let s' = SpecClause st isAssume e'
     atts' <- concatMapM (shadowAttribute opts True) atts
     let pr' = Predicate atts' s'
-    return [pr']
-shadowPredicate p opts mode@(isDualMode -> False) pr@(leakagePred opts -> Just (Predicate atts (SpecClause st isAssume e))) = strace opts ("shadow non-leakage predicate " ++ show (pretty pr)) $ do
+    if isOut
+        then do -- add to shadow assertions (in reverse order)
+            addShadowAssert pr'
+            return []
+        else return [pr']
+shadowPredicate p opts mode@(isDualMode -> False) pr@(leakagePred opts -> Just (Predicate atts (SpecClause st isAssume e),isOut)) = strace opts ("shadow non-leakage predicate " ++ show (pretty pr)) $ do
     e' <- shadowExpression opts ShadowE e
     let s' = SpecClause st isAssume e'
     atts' <- concatMapM (shadowAttribute opts False) atts
@@ -764,6 +775,11 @@ shadowPredicate p opts mode pr@(freePred opts -> Predicate atts (SpecClause st i
     atts' <- concatMapM (shadowAttribute opts False) atts
     let pr' = Predicate atts' s'
     if isDualE mode then return [removeLeakageAnns opts True opr,pr'] else return [pr']
+
+addShadowAssert :: MonadIO m => BareStatement -> ShadowM m ()
+addShadowAssert p = do
+    Just shadow_asserts <- liftM shadowAsserts State.get
+    State.modify $ \st -> st { shadowAsserts = Just (p : shadow_asserts) }
 
 -- normal program with the last goto replaced pointing to the shadow label and annotations removed
 redirectBasicBlock :: Options -> Maybe Id -> Id -> BasicBlock -> BasicBlock
